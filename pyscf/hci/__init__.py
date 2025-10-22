@@ -14,4 +14,4 @@
 
 __version__ = '0.1.0'
 
-from pyscf.hci.hci import SelectedCI, SCI
+from pyscf.hci.hci import SelectedCI, SCI, as_SCIvector, orblst2str

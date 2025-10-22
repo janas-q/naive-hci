@@ -422,7 +422,7 @@ def kernel_float_space(myci, h1e, eri, norb, nelec, ci0=None,
                        tol=None, lindep=None, max_cycle=None, max_space=None,
                        nroots=None, davidson_only=None, max_iter=None,
                        max_memory=None, verbose=None, ecore=0, return_integrals=False,
-                       eri_sorted=None, jk=None, jk_sorted=None, **kwargs):
+                       eri_sorted=None, jk=None, jk_sorted=None, return_history=False, **kwargs):
     if verbose is None:
         log = logger.Logger(myci.stdout, myci.verbose)
     elif isinstance(verbose, logger.Logger):
@@ -479,6 +479,10 @@ def kernel_float_space(myci, h1e, eri, norb, nelec, ci0=None,
         return hc.ravel()
     precond = lambda x, e, *args: x/(hdiag-e+myci.level_shift)
 
+    if return_history is True:
+        energies = []
+        space_sizes = []
+
     e_last = 0
     float_tol = 3e-4
     # conv = False
@@ -500,6 +504,10 @@ def kernel_float_space(myci, h1e, eri, norb, nelec, ci0=None,
         ci0 = [as_SCIvector(c, ci_strs) for c in ci0]
         de, e_last = min(e)-e_last, min(e)
         log.info('Cycle %d  E = %s  dE = %.8g', icycle, numpy.array(e)+ecore, de)
+
+        if return_history is True:
+            energies.append(e[0])
+            space_sizes.append(ci_strs.shape[0])
 
         if abs(de) < tol*1e3:
             # conv = True
@@ -529,7 +537,14 @@ def kernel_float_space(myci, h1e, eri, norb, nelec, ci0=None,
     if (return_integrals):
         return (numpy.array(e)+ecore), [as_SCIvector(ci, ci_strs) for ci in c], eri_sorted, jk, jk_sorted
     else:
-        return (numpy.array(e)+ecore), [as_SCIvector(ci, ci_strs) for ci in c]
+        if return_history is True:
+            return (
+                (numpy.array(e)+ecore),
+                [as_SCIvector(ci, ci_strs) for ci in c],
+                (numpy.array(space_sizes), numpy.array(energies))
+            )
+        else:
+            return (numpy.array(e)+ecore), [as_SCIvector(ci, ci_strs) for ci in c]
 
 def fix_spin(myci, shift=.2, ss=None, **kwargs):
     r'''If Selected CI solver cannot stick on spin eigenfunction, modify the solver by
@@ -792,6 +807,48 @@ def as_SCIvector_if_not(civec, ci_strs):
         civec = as_SCIvector(civec, ci_strs)
     return civec
 
+
+def myeig(myci, h1e, eri, ci_strs, norb, nelec, ci0=None,
+          float_tol=3e-4, lindep=None, max_cycle=None, max_space=None,
+          nroots=None, max_memory=None, verbose=None, **kwargs):
+    if verbose is None:
+        log = logger.Logger(myci.stdout, myci.verbose)
+    elif isinstance(verbose, logger.Logger):
+        log = verbose
+    else:
+        log = logger.Logger(myci.stdout, verbose)
+    if lindep is None: lindep = myci.lindep
+    if max_cycle is None: max_cycle = myci.max_cycle
+    if max_space is None: max_space = myci.max_space
+    if nroots is None: nroots = myci.nroots
+    if max_memory is None: max_memory = myci.max_memory
+    if myci.verbose >= logger.WARN:
+        myci.check_sanity()
+
+    # Initial guess
+    if ci0 is None:
+        hf_str = numpy.hstack(
+            [orblst2str(range(nelec[0]), norb),
+             orblst2str(range(nelec[1]), norb)]
+        ).reshape(1,-1)
+        ci0 = [as_SCIvector(numpy.ones(1), hf_str)]
+    # else:
+    #     assert(nroots == len(ci0))
+
+    def hop(c):
+        hc = myci.contract_2e((h1e, eri), as_SCIvector(c, ci_strs), norb, nelec, hdiag)
+        return hc.ravel()
+    precond = lambda x, e, *args: x/(hdiag-e+myci.level_shift)
+    hdiag = myci.make_hdiag(h1e, eri, ci_strs, norb, nelec)
+    e, c = myci.eig(hop, ci0, precond, tol=float_tol, lindep=lindep,
+                      max_cycle=max_cycle, max_space=max_space, nroots=nroots,
+                      max_memory=max_memory, verbose=log, **kwargs)
+    if not isinstance(c, (tuple, list)):
+        c = [c]
+        e = [e]
+    log.info('\nSelected CI  E = %s', numpy.array(e))
+
+    return numpy.array(e), [as_SCIvector(ci, ci_strs) for ci in c]
 
 if __name__ == '__main__':
     numpy.random.seed(3)
